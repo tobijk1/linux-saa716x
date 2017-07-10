@@ -1,0 +1,6 @@
+* Fix module dependencies
+* Fix irq problems after module unload/load
+* Remove KERNEL_VERSION dependencies
+* Remove unused multi-vector MSI code
+* Remove otherwise unused ROM debug code
+* Fix checkpatch errors
