@@ -1756,15 +1756,13 @@ static int saa716x_s26400_frontend_attach(struct saa716x_adapter *adapter, int c
 	dprintk(SAA716x_DEBUG, 1, "Adapter (%d) Device ID=%02x", count, saa716x->pdev->subsystem_device);
 
 	if (count == 0 || count == 1) {
-		adapter->fe = dvb_attach(stv090x_attach,
-					 &tt6400_stv090x_config,
+		adapter->fe = stv090x_attach(&tt6400_stv090x_config,
 					 i2c_adapter,
 					 STV090x_DEMODULATOR_0 + count);
 
 		if (adapter->fe) {
-			struct stv6110x_devctl *ctl;
-			ctl = dvb_attach(stv6110x_attach,
-					 adapter->fe,
+			const struct stv6110x_devctl *ctl;
+			ctl = stv6110x_attach(adapter->fe,
 					 &tt6400_stv6110x_config,
 					 i2c_adapter);
 
@@ -1790,8 +1788,7 @@ static int saa716x_s26400_frontend_attach(struct saa716x_adapter *adapter, int c
 					adapter->fe->ops.init(adapter->fe);
 			}
 
-			dvb_attach(isl6423_attach,
-				   adapter->fe,
+			isl6423_attach(adapter->fe,
 				   i2c_adapter,
 				   &tt6400_isl6423_config[count]);
 

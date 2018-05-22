@@ -539,7 +539,7 @@ static int skystar2_express_hd_frontend_attach(struct saa716x_adapter *adapter,
 {
 	struct saa716x_dev *saa716x = adapter->saa716x;
 	struct saa716x_i2c *i2c = &saa716x->i2c[SAA716x_I2C_BUS_B];
-	struct stv6110x_devctl *ctl;
+	const struct stv6110x_devctl *ctl;
 
 	if (count < saa716x->config->adapters) {
 		dprintk(SAA716x_DEBUG, 1, "Adapter (%d) SAA716x frontend Init",
@@ -557,8 +557,7 @@ static int skystar2_express_hd_frontend_attach(struct saa716x_adapter *adapter,
 		saa716x_gpio_write(saa716x, 26, 1);
 		msleep(10);
 
-		adapter->fe = dvb_attach(stv090x_attach,
-					 &skystar2_stv090x_config,
+		adapter->fe = stv090x_attach(&skystar2_stv090x_config,
 					 &i2c->i2c_adapter,
 					 STV090x_DEMODULATOR_0);
 
@@ -572,8 +571,7 @@ static int skystar2_express_hd_frontend_attach(struct saa716x_adapter *adapter,
 		adapter->fe->ops.set_voltage = skystar2_set_voltage;
 		adapter->fe->ops.enable_high_lnb_voltage = skystar2_voltage_boost;
 
-		ctl = dvb_attach(stv6110x_attach,
-				 adapter->fe,
+		ctl = stv6110x_attach(adapter->fe,
 				 &skystar2_stv6110x_config,
 				 &i2c->i2c_adapter);
 

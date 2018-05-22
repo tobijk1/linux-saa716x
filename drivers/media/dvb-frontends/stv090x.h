@@ -109,7 +109,7 @@ struct stv090x_config {
 
 #if IS_REACHABLE(CONFIG_DVB_STV090x)
 
-struct dvb_frontend *stv090x_attach(struct stv090x_config *config,
+extern struct dvb_frontend *stv090x_attach(struct stv090x_config *config,
 				    struct i2c_adapter *i2c,
 				    enum stv090x_demodulator demod);
 

@@ -483,7 +483,7 @@ static int saa716x_atlantis_frontend_attach(struct saa716x_adapter *adapter,
 			"found TDA10046 DVB-T frontend @0x%02x",
 			tda1004x_atlantis_config.demod_address);
 
-		if (dvb_attach(tda827x_attach, adapter->fe,
+		if (tda827x_attach(adapter->fe,
 			       tda1004x_atlantis_config.tuner_address,
 			       &i2c->i2c_adapter, &tda827x_atlantis_config)) {
 			dprintk(SAA716x_ERROR, 1, "found TDA8275 tuner @0x%02x",
@@ -594,7 +594,7 @@ static int saa716x_nemo_frontend_attach(struct saa716x_adapter *adapter, int cou
 		} else {
 			goto exit;
 		}
-		if (dvb_attach(tda827x_attach, adapter->fe,
+		if (tda827x_attach(adapter->fe,
 			       tda1004x_nemo_config.tuner_address,
 			       &tuner_i2c->i2c_adapter, &tda827x_nemo_config)) {
 			dprintk(SAA716x_ERROR, 1, "found TDA8275 tuner @0x%02x",
