@@ -16,6 +16,7 @@
 
 #include "stv6110x.h"
 #include "stv090x.h"
+#include "stv090x_priv.h"
 #include "si2168.h"
 #include "si2157.h"
 
@@ -131,38 +132,15 @@ static irqreturn_t saa716x_budget_pci_irq(int irq, void *dev_id)
 #define SAA716x_MODEL_SKYSTAR2_EXPRESS_HD	"SkyStar 2 eXpress HD"
 #define SAA716x_DEV_SKYSTAR2_EXPRESS_HD		"DVB-S/S2"
 
-static struct stv090x_config skystar2_stv090x_config = {
-	.device			= STV0903,
-	.demod_mode		= STV090x_SINGLE,
-	.clk_mode		= STV090x_CLK_EXT,
-
-	.xtal			= 8000000,
-	.address		= 0x68,
-
-	.ts1_mode		= STV090x_TSMODE_DVBCI,
-	.ts2_mode		= STV090x_TSMODE_SERIAL_CONTINUOUS,
-
-	.repeater_level		= STV090x_RPTLEVEL_16,
-
-	.tuner_init		= NULL,
-	.tuner_sleep		= NULL,
-	.tuner_set_mode		= NULL,
-	.tuner_set_frequency	= NULL,
-	.tuner_get_frequency	= NULL,
-	.tuner_set_bandwidth	= NULL,
-	.tuner_get_bandwidth	= NULL,
-	.tuner_set_bbgain	= NULL,
-	.tuner_get_bbgain	= NULL,
-	.tuner_set_refclk	= NULL,
-	.tuner_get_status	= NULL,
-};
-
 static int skystar2_set_voltage(struct dvb_frontend *fe,
 				enum fe_sec_voltage voltage)
 {
 	int err;
 	u8 en = 0;
 	u8 sel = 0;
+
+	struct stv090x_state *state = fe->demodulator_priv;
+	struct stv090x_config *stv090x_config = state->config;
 
 	switch (voltage) {
 	case SEC_VOLTAGE_OFF:
@@ -183,10 +161,10 @@ static int skystar2_set_voltage(struct dvb_frontend *fe,
 		break;
 	}
 
-	err = skystar2_stv090x_config.set_gpio(fe, 2, 0, en, 0);
+	err = stv090x_config->set_gpio(fe, 2, 0, en, 0);
 	if (err < 0)
 		goto exit;
-	err = skystar2_stv090x_config.set_gpio(fe, 3, 0, sel, 0);
+	err = stv090x_config->set_gpio(fe, 3, 0, sel, 0);
 	if (err < 0)
 		goto exit;
 
@@ -200,12 +178,15 @@ static int skystar2_voltage_boost(struct dvb_frontend *fe, long arg)
 	int err;
 	u8 value;
 
+	struct stv090x_state *state = fe->demodulator_priv;
+	struct stv090x_config *stv090x_config = state->config;
+
 	if (arg)
 		value = 1;
 	else
 		value = 0;
 
-	err = skystar2_stv090x_config.set_gpio(fe, 4, 0, value, 0);
+	err = stv090x_config->set_gpio(fe, 4, 0, value, 0);
 	if (err < 0)
 		goto exit;
 
@@ -214,20 +195,18 @@ exit:
 	return err;
 }
 
-static const struct stv6110x_config skystar2_stv6110x_config = {
-	.addr			= 0x60,
-	.refclk			= 16000000,
-	.clk_div		= 2,
-};
-
 static int skystar2_express_hd_frontend_attach(struct saa716x_adapter *adapter,
 					       int count)
 {
 	struct saa716x_dev *saa716x = adapter->saa716x;
 	struct saa716x_i2c *i2c = &saa716x->i2c[SAA716x_I2C_BUS_B];
 	struct stv6110x_devctl *ctl;
+	int ret  = 0;
 
 	if (count < saa716x->config->adapters) {
+		struct stv090x_config *stv090x_config = NULL;
+		struct stv6110x_config *stv6110x_config = NULL;
+
 		pci_dbg(saa716x->pdev, "Adapter (%d) SAA716x frontend Init",
 			count);
 		pci_dbg(saa716x->pdev, "Adapter (%d) Device ID=%02x", count,
@@ -243,35 +222,74 @@ static int skystar2_express_hd_frontend_attach(struct saa716x_adapter *adapter,
 		saa716x_gpio_write(saa716x, 26, 1);
 		msleep(10);
 
-		adapter->fe = dvb_attach(stv090x_attach,
-					 &skystar2_stv090x_config,
-					 &i2c->i2c_adapter,
-					 STV090x_DEMODULATOR_0);
-
-		if (!adapter->fe)
+		stv090x_config = kzalloc(sizeof(*stv090x_config), GFP_KERNEL);
+		if (!stv090x_config) {
+			ret = -ENOMEM;
 			goto exit;
+		}
+
+		stv6110x_config = kzalloc(sizeof(*stv6110x_config), GFP_KERNEL);
+		if (!stv6110x_config) {
+			ret = -ENOMEM;
+			goto exit;
+		}
+
+		stv090x_config->device		= STV0903;
+		stv090x_config->demod_mode	= STV090x_SINGLE;
+		stv090x_config->clk_mode	= STV090x_CLK_EXT;
+		stv090x_config->demod		= STV090x_DEMODULATOR_0;
+		stv090x_config->xtal		= 8000000;
+		stv090x_config->address		= 0x68;
+		stv090x_config->ts1_mode	= STV090x_TSMODE_DVBCI;
+		stv090x_config->ts2_mode	= STV090x_TSMODE_SERIAL_CONTINUOUS;
+		stv090x_config->repeater_level	= STV090x_RPTLEVEL_16;
+
+		adapter->fe_config = stv090x_config;
+
+		adapter->i2c_client_demod =
+			dvb_module_probe("stv090x", NULL,
+					&i2c->i2c_adapter,
+					stv090x_config->address,
+					stv090x_config);
+		adapter->fe =
+			stv090x_config->get_dvb_frontend(adapter->i2c_client_demod);
+
+		if (!adapter->fe) {
+			ret = -ENODEV;
+			goto exit;
+		}
 
 		adapter->fe->ops.set_voltage = skystar2_set_voltage;
 		adapter->fe->ops.enable_high_lnb_voltage =
 						 skystar2_voltage_boost;
 
-		ctl = dvb_attach(stv6110x_attach,
-				 adapter->fe,
-				 &skystar2_stv6110x_config,
-				 &i2c->i2c_adapter);
+		stv6110x_config->addr		= 0x60;
+		stv6110x_config->refclk		= 16000000;
+		stv6110x_config->clk_div	= 2;
+		stv6110x_config->frontend	= adapter->fe;
+
+		adapter->ctl_config = stv6110x_config;
+
+		adapter->i2c_client_tuner =
+		dvb_module_probe("stv6110x", NULL,
+				&i2c->i2c_adapter,
+				stv6110x_config->addr,
+				stv6110x_config);
+
+		ctl = stv6110x_config->get_devctl(adapter->i2c_client_tuner);
 
 		if (ctl) {
-			skystar2_stv090x_config.tuner_init	    = ctl->tuner_init;
-			skystar2_stv090x_config.tuner_sleep	    = ctl->tuner_sleep;
-			skystar2_stv090x_config.tuner_set_mode	    = ctl->tuner_set_mode;
-			skystar2_stv090x_config.tuner_set_frequency = ctl->tuner_set_frequency;
-			skystar2_stv090x_config.tuner_get_frequency = ctl->tuner_get_frequency;
-			skystar2_stv090x_config.tuner_set_bandwidth = ctl->tuner_set_bandwidth;
-			skystar2_stv090x_config.tuner_get_bandwidth = ctl->tuner_get_bandwidth;
-			skystar2_stv090x_config.tuner_set_bbgain    = ctl->tuner_set_bbgain;
-			skystar2_stv090x_config.tuner_get_bbgain    = ctl->tuner_get_bbgain;
-			skystar2_stv090x_config.tuner_set_refclk    = ctl->tuner_set_refclk;
-			skystar2_stv090x_config.tuner_get_status    = ctl->tuner_get_status;
+			stv090x_config->tuner_init		= ctl->tuner_init;
+			stv090x_config->tuner_sleep		= ctl->tuner_sleep;
+			stv090x_config->tuner_set_mode		= ctl->tuner_set_mode;
+			stv090x_config->tuner_set_frequency	= ctl->tuner_set_frequency;
+			stv090x_config->tuner_get_frequency	= ctl->tuner_get_frequency;
+			stv090x_config->tuner_set_bandwidth	= ctl->tuner_set_bandwidth;
+			stv090x_config->tuner_get_bandwidth	= ctl->tuner_get_bandwidth;
+			stv090x_config->tuner_set_bbgain	= ctl->tuner_set_bbgain;
+			stv090x_config->tuner_get_bbgain	= ctl->tuner_get_bbgain;
+			stv090x_config->tuner_set_refclk	= ctl->tuner_set_refclk;
+			stv090x_config->tuner_get_status	= ctl->tuner_get_status;
 			/*
 			 * call the init function once to initialize
 			 * tuner's clock output divider and demod's
@@ -280,15 +298,16 @@ static int skystar2_express_hd_frontend_attach(struct saa716x_adapter *adapter,
 			if (adapter->fe->ops.init)
 				adapter->fe->ops.init(adapter->fe);
 		} else {
+			ret = -ENODEV;
 			goto exit;
 		}
 
 		pci_dbg(saa716x->pdev, "Done!");
-		return 0;
+		return ret;
 	}
 exit:
 	pci_err(saa716x->pdev, "Frontend attach failed");
-	return -ENODEV;
+	return ret;
 }
 
 static const struct saa716x_config skystar2_express_hd_config = {
