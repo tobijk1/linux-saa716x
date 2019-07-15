@@ -34,6 +34,7 @@ available subsections can be seen below.
    pci/index
    spi
    i2c
+   ipmb
    i3c/index
    hsi
    edac
@@ -42,6 +43,7 @@ available subsections can be seen below.
    target
    mtdnand
    miscellaneous
+   mei/index
    w1
    rapidio
    s390-drivers
@@ -56,6 +58,8 @@ available subsections can be seen below.
    slimbus
    soundwire/index
    fpga/index
+   acpi/index
+   generic-counter
 
 .. only::  subproject and html
 

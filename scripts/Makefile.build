@@ -222,6 +222,9 @@ endif
 ifdef CONFIG_RETPOLINE
   objtool_args += --retpoline
 endif
+ifdef CONFIG_X86_SMAP
+  objtool_args += --uaccess
+endif
 
 # 'OBJECT_FILES_NON_STANDARD := y': skip objtool checking for a directory
 # 'OBJECT_FILES_NON_STANDARD_foo.o := 'y': skip objtool checking for a file
@@ -290,6 +293,15 @@ quiet_cmd_cc_lst_c = MKLST   $@
 
 $(obj)/%.lst: $(src)/%.c FORCE
 	$(call if_changed_dep,cc_lst_c)
+
+# header test (header-test-y target)
+# ---------------------------------------------------------------------------
+
+quiet_cmd_cc_s_h = CC      $@
+      cmd_cc_s_h = $(CC) $(c_flags) -S -o $@ -x c /dev/null -include $<
+
+$(obj)/%.h.s: $(src)/%.h FORCE
+	$(call if_changed_dep,cc_s_h)
 
 # Compile assembler sources (.S)
 # ---------------------------------------------------------------------------
@@ -501,7 +513,7 @@ existing-targets := $(wildcard $(sort $(targets)))
 
 -include $(foreach f,$(existing-targets),$(dir $(f)).$(notdir $(f)).cmd)
 
-ifneq ($(KBUILD_SRC),)
+ifdef building_out_of_srctree
 # Create directories for object files if they do not exist
 obj-dirs := $(sort $(obj) $(patsubst %/,%, $(dir $(targets))))
 # If targets exist, their directories apparently exist. Skip mkdir.

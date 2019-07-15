@@ -267,9 +267,9 @@ size_t dma_direct_max_mapping_size(struct device *dev);
 
 static inline const struct dma_map_ops *get_dma_ops(struct device *dev)
 {
-	if (dev && dev->dma_ops)
+	if (dev->dma_ops)
 		return dev->dma_ops;
-	return get_arch_dma_ops(dev ? dev->bus : NULL);
+	return get_arch_dma_ops(dev->bus);
 }
 
 static inline void set_dma_ops(struct device *dev,
@@ -650,7 +650,7 @@ static inline void dma_free_coherent(struct device *dev, size_t size,
 
 static inline u64 dma_get_mask(struct device *dev)
 {
-	if (dev && dev->dma_mask && *dev->dma_mask)
+	if (dev->dma_mask && *dev->dma_mask)
 		return *dev->dma_mask;
 	return DMA_BIT_MASK(32);
 }
@@ -728,13 +728,6 @@ static inline int dma_set_seg_boundary(struct device *dev, unsigned long mask)
 	}
 	return -EIO;
 }
-
-#ifndef dma_max_pfn
-static inline unsigned long dma_max_pfn(struct device *dev)
-{
-	return (*dev->dma_mask >> PAGE_SHIFT) + dev->dma_pfn_offset;
-}
-#endif
 
 static inline int dma_get_cache_alignment(void)
 {

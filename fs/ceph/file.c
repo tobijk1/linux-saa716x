@@ -247,6 +247,7 @@ static int ceph_init_file(struct inode *inode, struct file *file, int fmode)
 	case S_IFREG:
 		ceph_fscache_register_inode_cookie(inode);
 		ceph_fscache_file_set_cookie(inode, file);
+		/* fall through */
 	case S_IFDIR:
 		ret = ceph_init_file_info(inode, file, fmode,
 						S_ISDIR(inode->i_mode));
@@ -790,7 +791,7 @@ static void ceph_aio_complete_req(struct ceph_osd_request *req)
 		if (aio_work) {
 			INIT_WORK(&aio_work->work, ceph_aio_retry_work);
 			aio_work->req = req;
-			queue_work(ceph_inode_to_client(inode)->wb_wq,
+			queue_work(ceph_inode_to_client(inode)->inode_wq,
 				   &aio_work->work);
 			return;
 		}
@@ -928,7 +929,7 @@ ceph_direct_read_write(struct kiocb *iocb, struct iov_iter *iter,
 
 	dout("sync_direct_%s on file %p %lld~%u snapc %p seq %lld\n",
 	     (write ? "write" : "read"), file, pos, (unsigned)count,
-	     snapc, snapc->seq);
+	     snapc, snapc ? snapc->seq : 0);
 
 	ret = filemap_write_and_wait_range(inode->i_mapping,
 					   pos, pos + count - 1);
@@ -1888,9 +1889,9 @@ static int is_file_size_ok(struct inode *src_inode, struct inode *dst_inode,
 	return 0;
 }
 
-static ssize_t ceph_copy_file_range(struct file *src_file, loff_t src_off,
-				    struct file *dst_file, loff_t dst_off,
-				    size_t len, unsigned int flags)
+static ssize_t __ceph_copy_file_range(struct file *src_file, loff_t src_off,
+				      struct file *dst_file, loff_t dst_off,
+				      size_t len, unsigned int flags)
 {
 	struct inode *src_inode = file_inode(src_file);
 	struct inode *dst_inode = file_inode(dst_file);
@@ -1908,6 +1909,8 @@ static ssize_t ceph_copy_file_range(struct file *src_file, loff_t src_off,
 
 	if (src_inode == dst_inode)
 		return -EINVAL;
+	if (src_inode->i_sb != dst_inode->i_sb)
+		return -EXDEV;
 	if (ceph_snap(dst_inode) != CEPH_NOSNAP)
 		return -EROFS;
 
@@ -2096,6 +2099,21 @@ out_caps:
 out:
 	ceph_free_cap_flush(prealloc_cf);
 
+	return ret;
+}
+
+static ssize_t ceph_copy_file_range(struct file *src_file, loff_t src_off,
+				    struct file *dst_file, loff_t dst_off,
+				    size_t len, unsigned int flags)
+{
+	ssize_t ret;
+
+	ret = __ceph_copy_file_range(src_file, src_off, dst_file, dst_off,
+				     len, flags);
+
+	if (ret == -EOPNOTSUPP || ret == -EXDEV)
+		ret = generic_copy_file_range(src_file, src_off, dst_file,
+					      dst_off, len, flags);
 	return ret;
 }
 

@@ -140,6 +140,7 @@ struct nvmet_port {
 	void				*priv;
 	bool				enabled;
 	int				inline_data_size;
+	const struct nvmet_fabrics_ops	*tr_ops;
 };
 
 static inline struct nvmet_port *to_nvmet_port(struct config_item *item)
@@ -277,6 +278,7 @@ struct nvmet_fabrics_ops {
 	void (*disc_traddr)(struct nvmet_req *req,
 			struct nvmet_port *port, char *traddr);
 	u16 (*install_queue)(struct nvmet_sq *nvme_sq);
+	void (*discovery_chg)(struct nvmet_port *port);
 };
 
 #define NVMET_MAX_INLINE_BIOVEC	8
@@ -284,7 +286,7 @@ struct nvmet_fabrics_ops {
 
 struct nvmet_req {
 	struct nvme_command	*cmd;
-	struct nvme_completion	*rsp;
+	struct nvme_completion	*cqe;
 	struct nvmet_sq		*sq;
 	struct nvmet_cq		*cq;
 	struct nvmet_ns		*ns;
@@ -322,7 +324,7 @@ extern struct workqueue_struct *buffered_io_wq;
 
 static inline void nvmet_set_result(struct nvmet_req *req, u32 result)
 {
-	req->rsp->result.u32 = cpu_to_le32(result);
+	req->cqe->result.u32 = cpu_to_le32(result);
 }
 
 /*

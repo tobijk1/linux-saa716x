@@ -1,19 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * db-export.c: Support for exporting data suitable for import to a database
  * Copyright (c) 2014, Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
  */
 
 #include <errno.h>
+#include <stdlib.h>
 
 #include "evsel.h"
 #include "machine.h"
@@ -22,11 +14,11 @@
 #include "symbol.h"
 #include "map.h"
 #include "event.h"
-#include "util.h"
 #include "thread-stack.h"
 #include "callchain.h"
 #include "call-path.h"
 #include "db-export.h"
+#include <linux/zalloc.h>
 
 struct deferred_export {
 	struct list_head node;
@@ -42,7 +34,7 @@ static int db_export__deferred(struct db_export *dbe)
 		de = list_entry(dbe->deferred.next, struct deferred_export,
 				node);
 		err = dbe->export_comm(dbe, de->comm);
-		list_del(&de->node);
+		list_del_init(&de->node);
 		free(de);
 		if (err)
 			return err;
@@ -58,7 +50,7 @@ static void db_export__free_deferred(struct db_export *dbe)
 	while (!list_empty(&dbe->deferred)) {
 		de = list_entry(dbe->deferred.next, struct deferred_export,
 				node);
-		list_del(&de->node);
+		list_del_init(&de->node);
 		free(de);
 	}
 }

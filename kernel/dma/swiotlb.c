@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Dynamic DMA mapping support.
  *
@@ -452,6 +453,7 @@ phys_addr_t swiotlb_tbl_map_single(struct device *hwdev,
 	unsigned long mask;
 	unsigned long offset_slots;
 	unsigned long max_slots;
+	unsigned long tmp_io_tlb_used;
 
 	if (no_iotlb_memory)
 		panic("Can not allocate SWIOTLB buffer earlier and can't now provide you with the DMA bounce buffer");
@@ -538,9 +540,12 @@ phys_addr_t swiotlb_tbl_map_single(struct device *hwdev,
 	} while (index != wrap);
 
 not_found:
+	tmp_io_tlb_used = io_tlb_used;
+
 	spin_unlock_irqrestore(&io_tlb_lock, flags);
 	if (!(attrs & DMA_ATTR_NO_WARN) && printk_ratelimit())
-		dev_warn(hwdev, "swiotlb buffer is full (sz: %zd bytes)\n", size);
+		dev_warn(hwdev, "swiotlb buffer is full (sz: %zd bytes), total %lu (slots), used %lu (slots)\n",
+			 size, io_tlb_nslabs, tmp_io_tlb_used);
 	return DMA_MAPPING_ERROR;
 found:
 	io_tlb_used += nslots;
@@ -691,29 +696,12 @@ bool is_swiotlb_active(void)
 
 static int __init swiotlb_create_debugfs(void)
 {
-	struct dentry *d_swiotlb_usage;
-	struct dentry *ent;
+	struct dentry *root;
 
-	d_swiotlb_usage = debugfs_create_dir("swiotlb", NULL);
-
-	if (!d_swiotlb_usage)
-		return -ENOMEM;
-
-	ent = debugfs_create_ulong("io_tlb_nslabs", 0400,
-				   d_swiotlb_usage, &io_tlb_nslabs);
-	if (!ent)
-		goto fail;
-
-	ent = debugfs_create_ulong("io_tlb_used", 0400,
-				   d_swiotlb_usage, &io_tlb_used);
-	if (!ent)
-		goto fail;
-
+	root = debugfs_create_dir("swiotlb", NULL);
+	debugfs_create_ulong("io_tlb_nslabs", 0400, root, &io_tlb_nslabs);
+	debugfs_create_ulong("io_tlb_used", 0400, root, &io_tlb_used);
 	return 0;
-
-fail:
-	debugfs_remove_recursive(d_swiotlb_usage);
-	return -ENOMEM;
 }
 
 late_initcall(swiotlb_create_debugfs);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * net/sunrpc/rpc_pipe.c
  *
@@ -202,16 +203,9 @@ rpc_alloc_inode(struct super_block *sb)
 }
 
 static void
-rpc_i_callback(struct rcu_head *head)
+rpc_free_inode(struct inode *inode)
 {
-	struct inode *inode = container_of(head, struct inode, i_rcu);
 	kmem_cache_free(rpc_inode_cachep, RPC_I(inode));
-}
-
-static void
-rpc_destroy_inode(struct inode *inode)
-{
-	call_rcu(&inode->i_rcu, rpc_i_callback);
 }
 
 static int
@@ -604,6 +598,8 @@ static int __rpc_rmdir(struct inode *dir, struct dentry *dentry)
 
 	dget(dentry);
 	ret = simple_rmdir(dir, dentry);
+	if (!ret)
+		fsnotify_rmdir(dir, dentry);
 	d_delete(dentry);
 	dput(dentry);
 	return ret;
@@ -615,6 +611,8 @@ static int __rpc_unlink(struct inode *dir, struct dentry *dentry)
 
 	dget(dentry);
 	ret = simple_unlink(dir, dentry);
+	if (!ret)
+		fsnotify_unlink(dir, dentry);
 	d_delete(dentry);
 	dput(dentry);
 	return ret;
@@ -1123,7 +1121,7 @@ void rpc_remove_cache_dir(struct dentry *dentry)
  */
 static const struct super_operations s_ops = {
 	.alloc_inode	= rpc_alloc_inode,
-	.destroy_inode	= rpc_destroy_inode,
+	.free_inode	= rpc_free_inode,
 	.statfs		= simple_statfs,
 };
 

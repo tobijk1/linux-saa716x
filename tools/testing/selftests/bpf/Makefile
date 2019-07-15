@@ -15,15 +15,19 @@ LLC		?= llc
 LLVM_OBJCOPY	?= llvm-objcopy
 LLVM_READELF	?= llvm-readelf
 BTF_PAHOLE	?= pahole
-CFLAGS += -Wall -O2 -I$(APIDIR) -I$(LIBDIR) -I$(BPFDIR) -I$(GENDIR) $(GENFLAGS) -I../../../include
+CFLAGS += -g -Wall -O2 -I$(APIDIR) -I$(LIBDIR) -I$(BPFDIR) -I$(GENDIR) $(GENFLAGS) -I../../../include \
+	  -Dbpf_prog_load=bpf_prog_test_load \
+	  -Dbpf_load_program=bpf_test_load_program
 LDLIBS += -lcap -lelf -lrt -lpthread
 
 # Order correspond to 'make run_tests' order
 TEST_GEN_PROGS = test_verifier test_tag test_maps test_lru_map test_lpm_map test_progs \
 	test_align test_verifier_log test_dev_cgroup test_tcpbpf_user \
-	test_sock test_btf test_sockmap test_lirc_mode2_user get_cgroup_id_user \
-	test_socket_cookie test_cgroup_storage test_select_reuseport test_section_names \
-	test_netcnt test_tcpnotify_user test_sock_fields
+	test_sock test_btf test_sockmap get_cgroup_id_user test_socket_cookie \
+	test_cgroup_storage test_select_reuseport test_section_names \
+	test_netcnt test_tcpnotify_user test_sock_fields test_sysctl test_hashmap \
+	test_btf_dump test_cgroup_attach xdping test_sockopt test_sockopt_sk \
+	test_sockopt_multi test_tcp_rtt
 
 BPF_OBJ_FILES = $(patsubst %.c,%.o, $(notdir $(wildcard progs/*.c)))
 TEST_GEN_FILES = $(BPF_OBJ_FILES)
@@ -43,6 +47,7 @@ TEST_PROGS := test_kmod.sh \
 	test_libbpf.sh \
 	test_xdp_redirect.sh \
 	test_xdp_meta.sh \
+	test_xdp_veth.sh \
 	test_offload.py \
 	test_sock_addr.sh \
 	test_tunnel.sh \
@@ -51,7 +56,11 @@ TEST_PROGS := test_kmod.sh \
 	test_skb_cgroup_id.sh \
 	test_flow_dissector.sh \
 	test_xdp_vlan.sh \
-	test_lwt_ip_encap.sh
+	test_lwt_ip_encap.sh \
+	test_tcp_check_syncookie.sh \
+	test_tc_tunnel.sh \
+	test_tc_edt.sh \
+	test_xdping.sh
 
 TEST_PROGS_EXTENDED := with_addr.sh \
 	with_tunnels.sh \
@@ -60,7 +69,8 @@ TEST_PROGS_EXTENDED := with_addr.sh \
 
 # Compile but not part of 'make run_tests'
 TEST_GEN_PROGS_EXTENDED = test_libbpf_open test_sock_addr test_skb_cgroup_id_user \
-	flow_dissector_load test_flow_dissector
+	flow_dissector_load test_flow_dissector test_tcp_check_syncookie_user \
+	test_lirc_mode2_user
 
 include ../lib.mk
 
@@ -69,13 +79,15 @@ TEST_CUSTOM_PROGS = $(OUTPUT)/urandom_read
 all: $(TEST_CUSTOM_PROGS)
 
 $(OUTPUT)/urandom_read: $(OUTPUT)/%: %.c
-	$(CC) -o $@ -static $< -Wl,--build-id
+	$(CC) -o $@ $< -Wl,--build-id
+
+$(OUTPUT)/test_maps: map_tests/*.c
 
 BPFOBJ := $(OUTPUT)/libbpf.a
 
-$(TEST_GEN_PROGS): $(BPFOBJ)
+$(TEST_GEN_PROGS): test_stub.o $(BPFOBJ)
 
-$(TEST_GEN_PROGS_EXTENDED): $(OUTPUT)/libbpf.a
+$(TEST_GEN_PROGS_EXTENDED): test_stub.o $(OUTPUT)/libbpf.a
 
 $(OUTPUT)/test_dev_cgroup: cgroup_helpers.c
 $(OUTPUT)/test_skb_cgroup_id_user: cgroup_helpers.c
@@ -90,6 +102,12 @@ $(OUTPUT)/get_cgroup_id_user: cgroup_helpers.c
 $(OUTPUT)/test_cgroup_storage: cgroup_helpers.c
 $(OUTPUT)/test_netcnt: cgroup_helpers.c
 $(OUTPUT)/test_sock_fields: cgroup_helpers.c
+$(OUTPUT)/test_sysctl: cgroup_helpers.c
+$(OUTPUT)/test_cgroup_attach: cgroup_helpers.c
+$(OUTPUT)/test_sockopt: cgroup_helpers.c
+$(OUTPUT)/test_sockopt_sk: cgroup_helpers.c
+$(OUTPUT)/test_sockopt_multi: cgroup_helpers.c
+$(OUTPUT)/test_tcp_rtt: cgroup_helpers.c
 
 .PHONY: force
 
@@ -170,7 +188,7 @@ $(ALU32_BUILD_DIR)/test_progs_32: test_progs.c $(OUTPUT)/libbpf.a\
 						$(ALU32_BUILD_DIR)/urandom_read
 	$(CC) $(TEST_PROGS_CFLAGS) $(CFLAGS) \
 		-o $(ALU32_BUILD_DIR)/test_progs_32 \
-		test_progs.c trace_helpers.c prog_tests/*.c \
+		test_progs.c test_stub.c trace_helpers.c prog_tests/*.c \
 		$(OUTPUT)/libbpf.a $(LDLIBS)
 
 $(ALU32_BUILD_DIR)/test_progs_32: $(PROG_TESTS_H)
@@ -206,7 +224,7 @@ ifeq ($(DWARF2BTF),y)
 endif
 
 PROG_TESTS_H := $(OUTPUT)/prog_tests/tests.h
-$(OUTPUT)/test_progs: $(PROG_TESTS_H)
+test_progs.c: $(PROG_TESTS_H)
 $(OUTPUT)/test_progs: CFLAGS += $(TEST_PROGS_CFLAGS)
 $(OUTPUT)/test_progs: prog_tests/*.c
 
@@ -228,8 +246,29 @@ $(PROG_TESTS_H): $(PROG_TESTS_DIR) $(PROG_TESTS_FILES)
 		  echo '#endif' \
 		 ) > $(PROG_TESTS_H))
 
+TEST_MAPS_CFLAGS := -I. -I$(OUTPUT)
+MAP_TESTS_DIR = $(OUTPUT)/map_tests
+$(MAP_TESTS_DIR):
+	mkdir -p $@
+MAP_TESTS_H := $(MAP_TESTS_DIR)/tests.h
+test_maps.c: $(MAP_TESTS_H)
+$(OUTPUT)/test_maps: CFLAGS += $(TEST_MAPS_CFLAGS)
+MAP_TESTS_FILES := $(wildcard map_tests/*.c)
+$(MAP_TESTS_H): $(MAP_TESTS_DIR) $(MAP_TESTS_FILES)
+	$(shell ( cd map_tests/; \
+		  echo '/* Generated header, do not edit */'; \
+		  echo '#ifdef DECLARE'; \
+		  ls *.c 2> /dev/null | \
+			sed -e 's@\([^\.]*\)\.c@extern void test_\1(void);@'; \
+		  echo '#endif'; \
+		  echo '#ifdef CALL'; \
+		  ls *.c 2> /dev/null | \
+			sed -e 's@\([^\.]*\)\.c@test_\1();@'; \
+		  echo '#endif' \
+		 ) > $(MAP_TESTS_H))
+
 VERIFIER_TESTS_H := $(OUTPUT)/verifier/tests.h
-$(OUTPUT)/test_verifier: $(VERIFIER_TESTS_H)
+test_verifier.c: $(VERIFIER_TESTS_H)
 $(OUTPUT)/test_verifier: CFLAGS += $(TEST_VERIFIER_CFLAGS)
 
 VERIFIER_TESTS_DIR = $(OUTPUT)/verifier
@@ -247,4 +286,5 @@ $(OUTPUT)/verifier/tests.h: $(VERIFIER_TESTS_DIR) $(VERIFIER_TEST_FILES)
 		 ) > $(VERIFIER_TESTS_H))
 
 EXTRA_CLEAN := $(TEST_CUSTOM_PROGS) $(ALU32_BUILD_DIR) \
-	$(VERIFIER_TESTS_H) $(PROG_TESTS_H)
+	$(VERIFIER_TESTS_H) $(PROG_TESTS_H) $(MAP_TESTS_H) \
+	feature

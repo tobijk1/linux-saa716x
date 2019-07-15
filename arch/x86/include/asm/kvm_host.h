@@ -1,11 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Kernel-based Virtual Machine driver for Linux
  *
  * This header defines architecture specific interfaces, x86 version
- *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
- *
  */
 
 #ifndef _ASM_X86_KVM_HOST_H
@@ -470,6 +467,7 @@ struct kvm_pmu {
 	u64 global_ovf_ctrl;
 	u64 counter_bitmask[2];
 	u64 global_ctrl_mask;
+	u64 global_ovf_ctrl_mask;
 	u64 reserved_bits;
 	u8 version;
 	struct kvm_pmc gp_counters[INTEL_PMC_MAX_GENERIC];
@@ -688,6 +686,7 @@ struct kvm_vcpu_arch {
 	u32 virtual_tsc_mult;
 	u32 virtual_tsc_khz;
 	s64 ia32_tsc_adjust_msr;
+	u64 msr_ia32_power_ctl;
 	u64 tsc_scaling_ratio;
 
 	atomic_t nmi_queued;  /* unprocessed asynchronous NMIs */
@@ -754,6 +753,8 @@ struct kvm_vcpu_arch {
 		struct gfn_to_hva_cache data;
 	} pv_eoi;
 
+	u64 msr_kvm_poll_control;
+
 	/*
 	 * Indicate whether the access faults on its page table in guest
 	 * which is set when fix page fault and used to detect unhandeable
@@ -781,6 +782,9 @@ struct kvm_vcpu_arch {
 
 	/* Flush the L1 Data cache for L1TF mitigation on VMENTER */
 	bool l1tf_flush_l1d;
+
+	/* AMD MSRC001_0015 Hardware Configuration */
+	u64 msr_hwcr;
 };
 
 struct kvm_lpage_info {
@@ -878,6 +882,7 @@ struct kvm_arch {
 	bool mwait_in_guest;
 	bool hlt_in_guest;
 	bool pause_in_guest;
+	bool cstate_in_guest;
 
 	unsigned long irq_sources_bitmap;
 	s64 kvmclock_offset;
@@ -925,6 +930,8 @@ struct kvm_arch {
 
 	bool guest_can_read_msr_platform_info;
 	bool exception_payload_enabled;
+
+	struct kvm_pmu_event_filter *pmu_event_filter;
 };
 
 struct kvm_vm_stat {
@@ -995,7 +1002,7 @@ struct kvm_x86_ops {
 	int (*disabled_by_bios)(void);             /* __init */
 	int (*hardware_enable)(void);
 	void (*hardware_disable)(void);
-	void (*check_processor_compatibility)(void *rtn);
+	int (*check_processor_compatibility)(void);/* __init */
 	int (*hardware_setup)(void);               /* __init */
 	void (*hardware_unsetup)(void);            /* __exit */
 	bool (*cpu_has_accelerated_tpr)(void);
@@ -1109,7 +1116,7 @@ struct kvm_x86_ops {
 	int (*check_intercept)(struct kvm_vcpu *vcpu,
 			       struct x86_instruction_info *info,
 			       enum x86_intercept_stage stage);
-	void (*handle_external_intr)(struct kvm_vcpu *vcpu);
+	void (*handle_exit_irqoff)(struct kvm_vcpu *vcpu);
 	bool (*mpx_supported)(void);
 	bool (*xsaves_supported)(void);
 	bool (*umip_emulated)(void);
@@ -1168,7 +1175,8 @@ struct kvm_x86_ops {
 			      uint32_t guest_irq, bool set);
 	void (*apicv_post_state_restore)(struct kvm_vcpu *vcpu);
 
-	int (*set_hv_timer)(struct kvm_vcpu *vcpu, u64 guest_deadline_tsc);
+	int (*set_hv_timer)(struct kvm_vcpu *vcpu, u64 guest_deadline_tsc,
+			    bool *expired);
 	void (*cancel_hv_timer)(struct kvm_vcpu *vcpu);
 
 	void (*setup_mce)(struct kvm_vcpu *vcpu);
@@ -1527,7 +1535,6 @@ int kvm_pv_send_ipi(struct kvm *kvm, unsigned long ipi_bitmap_low,
 		    unsigned long ipi_bitmap_high, u32 min,
 		    unsigned long icr, int op_64_bit);
 
-u64 kvm_get_arch_capabilities(void);
 void kvm_define_shared_msr(unsigned index, u32 msr);
 int kvm_set_shared_msr(unsigned index, u64 val, u64 mask);
 

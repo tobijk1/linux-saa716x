@@ -28,6 +28,7 @@
 #include <asm/mmu_context.h>		/* vma_pkey()			*/
 #include <asm/efi.h>			/* efi_recover_from_page_fault()*/
 #include <asm/desc.h>			/* store_idt(), ...		*/
+#include <asm/cpu_entry_area.h>		/* exception stack		*/
 
 #define CREATE_TRACE_POINTS
 #include <asm/trace/exceptions.h>
@@ -359,8 +360,6 @@ static noinline int vmalloc_fault(unsigned long address)
 	if (!(address >= VMALLOC_START && address < VMALLOC_END))
 		return -1;
 
-	WARN_ON_ONCE(in_nmi());
-
 	/*
 	 * Copy kernel mappings over when needed. This can also
 	 * happen within a race in page table update. In the later
@@ -603,24 +602,9 @@ static void show_ldttss(const struct desc_ptr *gdt, const char *name, u16 index)
 		 name, index, addr, (desc.limit0 | (desc.limit1 << 16)));
 }
 
-/*
- * This helper function transforms the #PF error_code bits into
- * "[PROT] [USER]" type of descriptive, almost human-readable error strings:
- */
-static void err_str_append(unsigned long error_code, char *buf, unsigned long mask, const char *txt)
-{
-	if (error_code & mask) {
-		if (buf[0])
-			strcat(buf, " ");
-		strcat(buf, txt);
-	}
-}
-
 static void
 show_fault_oops(struct pt_regs *regs, unsigned long error_code, unsigned long address)
 {
-	char err_txt[64];
-
 	if (!oops_may_print())
 		return;
 
@@ -644,30 +628,28 @@ show_fault_oops(struct pt_regs *regs, unsigned long error_code, unsigned long ad
 				from_kuid(&init_user_ns, current_uid()));
 	}
 
-	pr_alert("BUG: unable to handle kernel %s at %px\n",
-		 address < PAGE_SIZE ? "NULL pointer dereference" : "paging request",
-		 (void *)address);
+	if (address < PAGE_SIZE && !user_mode(regs))
+		pr_alert("BUG: kernel NULL pointer dereference, address: %px\n",
+			(void *)address);
+	else
+		pr_alert("BUG: unable to handle page fault for address: %px\n",
+			(void *)address);
 
-	err_txt[0] = 0;
-
-	/*
-	 * Note: length of these appended strings including the separation space and the
-	 * zero delimiter must fit into err_txt[].
-	 */
-	err_str_append(error_code, err_txt, X86_PF_PROT,  "[PROT]" );
-	err_str_append(error_code, err_txt, X86_PF_WRITE, "[WRITE]");
-	err_str_append(error_code, err_txt, X86_PF_USER,  "[USER]" );
-	err_str_append(error_code, err_txt, X86_PF_RSVD,  "[RSVD]" );
-	err_str_append(error_code, err_txt, X86_PF_INSTR, "[INSTR]");
-	err_str_append(error_code, err_txt, X86_PF_PK,    "[PK]"   );
-
-	pr_alert("#PF error: %s\n", error_code ? err_txt : "[normal kernel read fault]");
+	pr_alert("#PF: %s %s in %s mode\n",
+		 (error_code & X86_PF_USER)  ? "user" : "supervisor",
+		 (error_code & X86_PF_INSTR) ? "instruction fetch" :
+		 (error_code & X86_PF_WRITE) ? "write access" :
+					       "read access",
+			     user_mode(regs) ? "user" : "kernel");
+	pr_alert("#PF: error_code(0x%04lx) - %s\n", error_code,
+		 !(error_code & X86_PF_PROT) ? "not-present page" :
+		 (error_code & X86_PF_RSVD)  ? "reserved bit violation" :
+		 (error_code & X86_PF_PK)    ? "protection keys violation" :
+					       "permissions violation");
 
 	if (!(error_code & X86_PF_USER) && user_mode(regs)) {
 		struct desc_ptr idt, gdt;
 		u16 ldtr, tr;
-
-		pr_alert("This was a system access from user code\n");
 
 		/*
 		 * This can happen for quite a few reasons.  The more obvious
@@ -728,6 +710,10 @@ static void set_signal_archinfo(unsigned long address,
 	 * To avoid leaking information about the kernel page
 	 * table layout, pretend that user-mode accesses to
 	 * kernel addresses are always protection faults.
+	 *
+	 * NB: This means that failed vsyscalls with vsyscall=none
+	 * will have the PROT bit.  This doesn't leak any
+	 * information and does not appear to cause any problems.
 	 */
 	if (address >= TASK_SIZE_MAX)
 		error_code |= X86_PF_PROT;
@@ -774,8 +760,7 @@ no_context(struct pt_regs *regs, unsigned long error_code,
 			set_signal_archinfo(address, error_code);
 
 			/* XXX: hwpoison faults will set the wrong code. */
-			force_sig_fault(signal, si_code, (void __user *)address,
-					tsk);
+			force_sig_fault(signal, si_code, (void __user *)address);
 		}
 
 		/*
@@ -793,7 +778,7 @@ no_context(struct pt_regs *regs, unsigned long error_code,
 	if (is_vmalloc_addr((void *)address) &&
 	    (((unsigned long)tsk->stack - 1 - address < PAGE_SIZE) ||
 	     address - ((unsigned long)tsk->stack + THREAD_SIZE) < PAGE_SIZE)) {
-		unsigned long stack = this_cpu_read(orig_ist.ist[DOUBLEFAULT_STACK]) - sizeof(void *);
+		unsigned long stack = __this_cpu_ist_top_va(DF) - sizeof(void *);
 		/*
 		 * We're likely to be running with very little stack space
 		 * left.  It's plausible that we'd hit this condition but
@@ -936,7 +921,7 @@ __bad_area_nosemaphore(struct pt_regs *regs, unsigned long error_code,
 		if (si_code == SEGV_PKUERR)
 			force_sig_pkuerr((void __user *)address, pkey);
 
-		force_sig_fault(SIGSEGV, si_code, (void __user *)address, tsk);
+		force_sig_fault(SIGSEGV, si_code, (void __user *)address);
 
 		return;
 	}
@@ -1033,8 +1018,6 @@ static void
 do_sigbus(struct pt_regs *regs, unsigned long error_code, unsigned long address,
 	  vm_fault_t fault)
 {
-	struct task_struct *tsk = current;
-
 	/* Kernel mode? Handle exceptions or die: */
 	if (!(error_code & X86_PF_USER)) {
 		no_context(regs, error_code, address, SIGBUS, BUS_ADRERR);
@@ -1049,6 +1032,7 @@ do_sigbus(struct pt_regs *regs, unsigned long error_code, unsigned long address,
 
 #ifdef CONFIG_MEMORY_FAILURE
 	if (fault & (VM_FAULT_HWPOISON|VM_FAULT_HWPOISON_LARGE)) {
+		struct task_struct *tsk = current;
 		unsigned lsb = 0;
 
 		pr_err(
@@ -1058,11 +1042,11 @@ do_sigbus(struct pt_regs *regs, unsigned long error_code, unsigned long address,
 			lsb = hstate_index_to_shift(VM_FAULT_GET_HINDEX(fault));
 		if (fault & VM_FAULT_HWPOISON)
 			lsb = PAGE_SHIFT;
-		force_sig_mceerr(BUS_MCEERR_AR, (void __user *)address, lsb, tsk);
+		force_sig_mceerr(BUS_MCEERR_AR, (void __user *)address, lsb);
 		return;
 	}
 #endif
-	force_sig_fault(SIGBUS, BUS_ADRERR, (void __user *)address, tsk);
+	force_sig_fault(SIGBUS, BUS_ADRERR, (void __user *)address);
 }
 
 static noinline void
@@ -1387,16 +1371,18 @@ void do_user_addr_fault(struct pt_regs *regs,
 
 #ifdef CONFIG_X86_64
 	/*
-	 * Instruction fetch faults in the vsyscall page might need
-	 * emulation.  The vsyscall page is at a high address
-	 * (>PAGE_OFFSET), but is considered to be part of the user
-	 * address space.
+	 * Faults in the vsyscall page might need emulation.  The
+	 * vsyscall page is at a high address (>PAGE_OFFSET), but is
+	 * considered to be part of the user address space.
 	 *
 	 * The vsyscall page does not have a "real" VMA, so do this
 	 * emulation before we go searching for VMAs.
+	 *
+	 * PKRU never rejects instruction fetches, so we don't need
+	 * to consider the PF_PK bit.
 	 */
-	if ((hw_error_code & X86_PF_INSTR) && is_vsyscall_vaddr(address)) {
-		if (emulate_vsyscall(regs, address))
+	if (is_vsyscall_vaddr(address)) {
+		if (emulate_vsyscall(hw_error_code, regs, address))
 			return;
 	}
 #endif
