@@ -1434,39 +1434,6 @@ static irqreturn_t saa716x_ff_pci_irq(int irq, void *dev_id)
 #define SAA716x_MODEL_S2_6400_DUAL	"Technotrend S2 6400 Dual S2 Premium"
 #define SAA716x_DEV_S2_6400_DUAL	"2x DVB-S/S2 + Hardware decode"
 
-static struct stv090x_config tt6400_stv090x_config = {
-	.device			= STV0900,
-	.demod_mode		= STV090x_DUAL,
-	.clk_mode		= STV090x_CLK_EXT,
-
-	.xtal			= 13500000,
-	.address		= 0x68,
-
-	.ts1_mode		= STV090x_TSMODE_SERIAL_CONTINUOUS,
-	.ts2_mode		= STV090x_TSMODE_SERIAL_CONTINUOUS,
-	.ts1_clk		= 135000000,
-	.ts2_clk		= 135000000,
-
-	.repeater_level		= STV090x_RPTLEVEL_16,
-
-	.tuner_init		= NULL,
-	.tuner_set_mode		= NULL,
-	.tuner_set_frequency	= NULL,
-	.tuner_get_frequency	= NULL,
-	.tuner_set_bandwidth	= NULL,
-	.tuner_get_bandwidth	= NULL,
-	.tuner_set_bbgain	= NULL,
-	.tuner_get_bbgain	= NULL,
-	.tuner_set_refclk	= NULL,
-	.tuner_get_status	= NULL,
-};
-
-static const struct stv6110x_config tt6400_stv6110x_config = {
-	.addr			= 0x60,
-	.refclk			= 27000000,
-	.clk_div		= 2,
-};
-
 static const struct isl6423_config tt6400_isl6423_config[2] = {
 	{
 		.current_max		= SEC_CURRENT_515m,
@@ -1486,60 +1453,113 @@ static const struct isl6423_config tt6400_isl6423_config[2] = {
 static int saa716x_s26400_frontend_attach(struct saa716x_adapter *adapter,
 					  int count)
 {
-	struct saa716x_dev *saa716x	= adapter->saa716x;
-	struct saa716x_i2c *i2c		= saa716x->i2c;
-	struct i2c_adapter *i2c_adapter	= &i2c[SAA716x_I2C_BUS_A].i2c_adapter;
+	struct saa716x_dev *saa716x = adapter->saa716x;
+	struct saa716x_i2c *i2c = saa716x->i2c;
+	struct i2c_adapter *i2c_adapter = &i2c[SAA716x_I2C_BUS_A].i2c_adapter;
+	struct stv6110x_devctl *ctl;
+	int ret = 0;
 
 	pci_dbg(saa716x->pdev, "Adapter (%d) SAA716x frontend Init", count);
 	pci_dbg(saa716x->pdev, "Adapter (%d) Device ID=%02x", count,
 		saa716x->pdev->subsystem_device);
 
 	if (count == 0 || count == 1) {
-		adapter->fe = dvb_attach(stv090x_attach,
-					 &tt6400_stv090x_config,
-					 i2c_adapter,
-					 STV090x_DEMODULATOR_0 + count);
-		if (adapter->fe) {
-			struct stv6110x_devctl *ctl;
+		struct stv090x_config *stv090x_config = NULL;
+		struct stv6110x_config *stv6110x_config = NULL;
 
-			ctl = dvb_attach(stv6110x_attach,
-					 adapter->fe,
-					 &tt6400_stv6110x_config,
-					 i2c_adapter);
-
-			tt6400_stv090x_config.tuner_init	  = ctl->tuner_init;
-			tt6400_stv090x_config.tuner_sleep	  = ctl->tuner_sleep;
-			tt6400_stv090x_config.tuner_set_mode	  = ctl->tuner_set_mode;
-			tt6400_stv090x_config.tuner_set_frequency = ctl->tuner_set_frequency;
-			tt6400_stv090x_config.tuner_get_frequency = ctl->tuner_get_frequency;
-			tt6400_stv090x_config.tuner_set_bandwidth = ctl->tuner_set_bandwidth;
-			tt6400_stv090x_config.tuner_get_bandwidth = ctl->tuner_get_bandwidth;
-			tt6400_stv090x_config.tuner_set_bbgain	  = ctl->tuner_set_bbgain;
-			tt6400_stv090x_config.tuner_get_bbgain	  = ctl->tuner_get_bbgain;
-			tt6400_stv090x_config.tuner_set_refclk	  = ctl->tuner_set_refclk;
-			tt6400_stv090x_config.tuner_get_status	  = ctl->tuner_get_status;
-
-			if (count == 1) {
-				/* Call the init function once to initialize
-				 * tuner's clock output divider and demod's
-				 * master clock.
-				 * The second tuner drives the STV0900, so
-				 * call it only for adapter 1
-				 */
-				if (adapter->fe->ops.init)
-					adapter->fe->ops.init(adapter->fe);
-			}
-
-			dvb_attach(isl6423_attach,
-				   adapter->fe,
-				   i2c_adapter,
-				   &tt6400_isl6423_config[count]);
-
-			if (adapter->fe->ops.sleep)
-				adapter->fe->ops.sleep(adapter->fe);
+		stv090x_config = kzalloc(sizeof(*stv090x_config), GFP_KERNEL);
+		if (!stv090x_config) {
+			ret = -ENOMEM;
+			goto exit;
 		}
+
+		stv6110x_config = kzalloc(sizeof(*stv6110x_config), GFP_KERNEL);
+		if (!stv6110x_config) {
+			ret = -ENOMEM;
+			goto exit;
+		}
+
+		stv090x_config->device		= STV0900;
+		stv090x_config->demod_mode	= STV090x_DUAL;
+		stv090x_config->clk_mode	= STV090x_CLK_EXT;
+		stv090x_config->demod =
+			(count == 1) ? STV090x_DEMODULATOR_1 : STV090x_DEMODULATOR_0;
+		stv090x_config->demod		= STV090x_DEMODULATOR_1;
+		stv090x_config->xtal		= 13500000;
+		stv090x_config->address		= 0x68;
+		stv090x_config->ts1_mode	= STV090x_TSMODE_SERIAL_CONTINUOUS;
+		stv090x_config->ts2_mode	= STV090x_TSMODE_SERIAL_CONTINUOUS;
+		stv090x_config->ts1_clk		= 135000000;
+		stv090x_config->ts2_clk		= 135000000;
+		stv090x_config->repeater_level	= STV090x_RPTLEVEL_16;
+
+		adapter->fe_config = stv090x_config;
+
+		adapter->i2c_client_demod =
+			dvb_module_probe("stv090x", NULL,
+					 i2c_adapter,
+					 stv090x_config->address,
+					 stv090x_config);
+		adapter->fe =
+			stv090x_config->get_dvb_frontend(adapter->i2c_client_demod);
+
+		if (!adapter->fe) {
+			ret = -ENODEV;
+			goto exit;
+		}
+
+		stv6110x_config->addr		= 0x60;
+		stv6110x_config->refclk		= 27000000;
+		stv6110x_config->clk_div	= 2;
+		stv6110x_config->frontend	= adapter->fe;
+
+		adapter->ctl_config = stv6110x_config;
+
+		adapter->i2c_client_tuner =
+		dvb_module_probe("stv6110x", NULL,
+				 i2c_adapter,
+				 stv6110x_config->addr,
+				 stv6110x_config);
+
+		ctl = stv6110x_config->get_devctl(adapter->i2c_client_tuner);
+
+		stv090x_config->tuner_init		= ctl->tuner_init;
+		stv090x_config->tuner_sleep		= ctl->tuner_sleep;
+		stv090x_config->tuner_set_mode		= ctl->tuner_set_mode;
+		stv090x_config->tuner_set_frequency	= ctl->tuner_set_frequency;
+		stv090x_config->tuner_get_frequency	= ctl->tuner_get_frequency;
+		stv090x_config->tuner_set_bandwidth	= ctl->tuner_set_bandwidth;
+		stv090x_config->tuner_get_bandwidth	= ctl->tuner_get_bandwidth;
+		stv090x_config->tuner_set_bbgain	= ctl->tuner_set_bbgain;
+		stv090x_config->tuner_get_bbgain	= ctl->tuner_get_bbgain;
+		stv090x_config->tuner_set_refclk	= ctl->tuner_set_refclk;
+		stv090x_config->tuner_get_status	= ctl->tuner_get_status;
+
+		if (count == 1) {
+			/* Call the init function once to initialize
+			 * tuner's clock output divider and demod's
+			 * master clock.
+			 * The second tuner drives the STV0900, so
+			 * call it only for adapter 1
+			 */
+			if (adapter->fe->ops.init)
+				adapter->fe->ops.init(adapter->fe);
+		}
+
+		dvb_attach(isl6423_attach,
+			   adapter->fe,
+			   i2c_adapter,
+			   &tt6400_isl6423_config[count]);
+
+		if (adapter->fe->ops.sleep)
+			adapter->fe->ops.sleep(adapter->fe);
+
+		return ret;
 	}
-	return 0;
+
+exit:
+	pci_err(saa716x->pdev, "Frontend attach failed");
+	return ret;
 }
 
 static const struct saa716x_config saa716x_s26400_config = {
