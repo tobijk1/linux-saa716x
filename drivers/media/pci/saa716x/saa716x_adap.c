@@ -321,6 +321,11 @@ void saa716x_dvb_exit(struct saa716x_dev *saa716x)
 		pci_dbg(saa716x->pdev, "dvb_unregister_adapter");
 		dvb_unregister_adapter(&saa716x_adap->dvb_adapter);
 
+		if (saa716x_adap->fe_config)
+			kfree(saa716x_adap->fe_config);
+		if (saa716x_adap->ctl_config)
+			kfree(saa716x_adap->ctl_config);
+
 		saa716x_adap++;
 	}
 }
