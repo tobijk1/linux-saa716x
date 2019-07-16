@@ -76,6 +76,9 @@ struct saa716x_adapter {
 
 	struct i2c_client		*i2c_client_demod;
 	struct i2c_client		*i2c_client_tuner;
+
+	void				*fe_config;
+	void				*ctl_config;
 };
 
 struct saa716x_dev {
